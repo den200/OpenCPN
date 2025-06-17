@@ -1413,10 +1413,12 @@ if (OPENGL_FOUND)
             ${GUI_HDR_DIR}/glTextureDescriptor.h
             ${GUI_HDR_DIR}/glTexCache.h
             ${GUI_HDR_DIR}/glTextureManager.h
+            ${GUI_HDR_DIR}/glObjects.h
             ${GUI_SRC_DIR}/glTextureDescriptor.cpp
             ${GUI_SRC_DIR}/glTexCache.cpp
             ${GUI_SRC_DIR}/glChartCanvas.cpp
             ${GUI_SRC_DIR}/glTextureManager.cpp
+            ${GUI_SRC_DIR}/glObjects.cpp
   )
 endif ()
 
