@@ -1,0 +1,202 @@
+╔════════════════════════════════════════════════════════════════════════════════════════╗
+║                  OpenCPN COORDINATE TRANSFORMATION SYSTEM SUMMARY                     ║
+╚════════════════════════════════════════════════════════════════════════════════════════╝
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ TRANSFORMATION PIPELINE: 6 LEVELS                                                   ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+Level 1: GEOGRAPHIC (WGS84 Lat/Lon)
+  ├─ Storage: ViewPort.clat, ViewPort.clon
+  ├─ Range: ±90°, ±180°
+  ├─ Precision: double (64-bit)
+  └─ Example: 45.5°N, 73.6°W
+
+       │ toSMcache() [viewport.cpp:171]
+       │ toTM(), toORTHO(), etc.
+       ▼
+
+Level 2: PROJECTION (Easting/Northing in meters)
+  ├─ Formula: Mercator y = 0.5*ln((1+sin(lat))/(1-sin(lat)))*z
+  ├─ Reference: (ref_lat, ref_lon)
+  ├─ Precision: double (64-bit)
+  ├─ Cached: toSMcache_y30() precomputes expensive log
+  └─ Example: x=8,213,461 m, y=5,654,230 m
+
+       │ subtract cached viewport center
+       │ [s57chart.cpp:596]
+       ▼
+
+Level 3: RELATIVE PROJECTION (Meters from viewport center)
+  ├─ Formula: east_offset = east - m_easting_vp_center
+  ├─ Range: ±10,000 m (small deltas)
+  ├─ Precision: double (high-precision small values)
+  ├─ Cached in: s57chart.m_easting_vp_center
+  └─ Used by: GetPointPix() [s57chart.cpp:548]
+
+       │ multiply by view_scale_ppm
+       │ apply rotation [viewport.cpp:253]
+       ▼
+
+Level 4: SCALED PROJECTION (Pixels from center)
+  ├─ Formula: px = east_offset * view_scale_ppm
+  ├─ Range: ±pix_width/2 pixels
+  ├─ Includes: Rotation, skew transformations
+  └─ Example: -2,500 px, +1,250 px
+
+       │ add viewport center (pix_width/2, pix_height/2)
+       │ [viewport.cpp:256-257]
+       ▼
+
+Level 5: SCREEN PIXEL (Absolute viewport coordinates)
+  ├─ Formula: x = pix_width/2 + dx
+  ├─ Range: (0, 0) to (pix_width, pix_height)
+  ├─ Type: wxPoint (int) or wxPoint2DDouble
+  ├─ High-DPI: Divide by m_displayScale if non-OpenGL
+  └─ Example: (960, 360) on 1920×720 viewport
+
+       │ SetVPTransformMatrix() [glChartCanvas.cpp:622]
+       │ vp_matrix_transform 4×4 matrix
+       ▼
+
+Level 6: GPU NORMALIZED DEVICE COORD (NDC)
+  ├─ Matrix: scale(2/width, -2/height, 1), translate(-w/2, -h/2, 0)
+  ├─ Range: [-1, +1] in normalized space
+  ├─ Type: float32 (GPU vertex buffer)
+  ├─ Used by: GLSL vertex shaders (MVMatrix uniform)
+  └─ Example: (-0.5, 0.25)
+
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ KEY DATA STRUCTURES & FILES                                                         ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+ViewPort [gui/include/gui/viewport.h:84-257]
+  ├─ Geographic center: clat (double), clon (double)
+  ├─ Scale: view_scale_ppm (double) = pixels per meter
+  ├─ Transform: rotation (rad), skew (rad), tilt (rad)
+  ├─ Dimension: pix_width, pix_height (pixels)
+  ├─ Projection: m_projection_type (enum)
+  ├─ Cache: lat0_cache, cache0, cache1 (trig functions)
+  └─ GPU Matrix: vp_matrix_transform[16] (float), norm_transform[16]
+
+s57chart [gui/include/gui/s57chart.h:244-254]
+  ├─ Reference: ref_lat, ref_lon (chart origin)
+  ├─ SM Cache: m_easting_vp_center, m_northing_vp_center (projected viewport center)
+  ├─ Pixel Cache: m_pixx_vp_center, m_pixy_vp_center (screen center)
+  ├─ Scale: m_view_scale_ppm (current zoom level)
+  └─ History: m_last_vp (for cache coherency)
+
+S57Obj [libs/s52plib/src/s52s57.h:395-443]
+  ├─ Geometry: x, y (SM coordinates in meters)
+  └─ Transform: x_rate, y_rate, x_origin, y_origin (per-object adjustments)
+
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ SUPPORTED PROJECTIONS (10 TYPES)                                                   ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+PROJECTION_MERCATOR          → toSM() + toSMcache()     [georef.cpp:354, 384]
+PROJECTION_WEB_MERCATOR      → toSM() (0.9996 scale)
+PROJECTION_TRANSVERSE_MERC   → toTM()                   [georef.cpp:100-103]
+PROJECTION_POLYCONIC         → toPOLY()                 [georef.cpp:120-123]
+PROJECTION_ORTHOGRAPHIC      → toORTHO()                [georef.cpp:127-130]
+PROJECTION_POLAR             → toPOLAR()                [georef.cpp:132-136]
+PROJECTION_STEREOGRAPHIC     → toSTEREO()               [georef.cpp:138-141]
+PROJECTION_GNOMONIC          → toGNO()                  [georef.cpp:143-146]
+PROJECTION_EQUIRECTANGULAR   → toEQUIRECT()             [georef.cpp:148-151]
+PROJECTION_UNKNOWN           → (fallback, error)
+
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ PRECISION STRATEGY: 3-LEVEL HIERARCHY                                              ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+Why needed? Float32 has ~7 decimal digits precision. Large coordinates lose precision.
+
+Example: Montreal area, 100 km² viewport
+  Geographic: 45.5°, -73.6° (±0.05° = ±5.5 km)
+  Absolute Mercator: 8,213,461 m (loses sub-meter precision in float)
+  Relative to viewport: ±50,000 m (maintains ~0.01 mm with double)
+  Pixels: ±2,500 px (perfect integer precision)
+
+Three-level preservation:
+  Level 1: Store geographic center in double (clat, clon)
+  Level 2: Compute SM relative to chart ref point (m_easting_vp_center)
+  Level 3: Offset from viewport center → small values maintain precision
+
+Result: Sub-millimeter accuracy over large charts using 64-bit doubles
+
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ CRITICAL FUNCTIONS & CALL CHAIN                                                    ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+Forward (Lat/Lon → Screen):
+
+  ViewPort::GetDoublePixFromLL(lat, lon) [viewport.cpp:145-266]
+    ├─ Normalize longitude (handle IDL crossing)
+    ├─ Select & cache projection functions [line 168-181]
+    ├─ Call projection: toSMcache(lat, lon, cached_y0, ...) [line 187]
+    │   └─ Output: easting, northing (meters, relative to ref_point)
+    ├─ Scale: epix = easting * view_scale_ppm [line 244]
+    ├─ Rotate: apply rotation matrix [line 252-255]
+    └─ Translate: add viewport center [line 256-257]
+    
+  s57chart::GetPointPix(SM_x, SM_y) [s57chart.cpp:546-552]
+    └─ Uses cached values:
+       - (east - m_easting_vp_center) * view_scale_ppm + pix_width/2
+       - (north - m_northing_vp_center) * view_scale_ppm + pix_height/2
+
+Reverse (Screen → Lat/Lon):
+
+  ViewPort::GetLLFromPix(px, py) [viewport.cpp:268-341]
+    ├─ Subtract viewport center
+    ├─ Remove rotation
+    ├─ Divide by view_scale_ppm
+    ├─ Call inverse projection: fromSM(east, north, ...) [line 293]
+    └─ Normalize longitude [line 336-340]
+
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ CONSTANTS & PARAMETERS                                                             ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+WGS84_semimajor_axis_meters = 6378137.0 (Earth radius at equator)
+mercator_k0 = 0.9996 (Transverse Mercator scale factor)
+WGSinvf = 298.257223563 (WGS84 inverse flattening)
+DEGREE = PI / 180.0 = 0.0174532925... (radian conversion)
+INVALID_COORD = -2147483647 - 1 (sentinel for out-of-bounds)
+
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ CACHING & OPTIMIZATION                                                             ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+Mercator Cache (10x speedup for 1000+ geometry points):
+  
+  Expensive: y30 = 0.5 * log((1 + sin(lat0)) / (1 - sin(lat0))) * z
+  
+  Cached approach:
+    toSMcache_y30(lat0) [called once at viewport update]
+      → precomputes y30
+    
+    toSMcache(lat, lon, cached_y30, ...) [called per point]
+      → y3 = 0.5 * log((1 + sin(lat)) / (1 - sin(lat))) * z
+      → y = y3 - cached_y30
+  
+  Benefit: Avoid repeated sin/log at viewport center latitude
+
+Call frequency:
+  SetVPParms() [s57chart.cpp:590]
+    ├─ Called: every viewport change (pan/zoom)
+    ├─ Executes: one toSM() call
+    └─ Updates: m_easting_vp_center, m_northing_vp_center
+  
+  GetPointPix() [s57chart.cpp:546]
+    ├─ Called: per geometry point during rendering
+    ├─ Executes: simple arithmetic (no trig)
+    └─ Uses: cached m_easting_vp_center values
+
+
+For detailed analysis, see: COORDINATE_SYSTEM_ANALYSIS.md
